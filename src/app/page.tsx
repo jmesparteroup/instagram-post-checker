@@ -1,103 +1,244 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { CheckCircle, XCircle, Loader2, Instagram, AlertCircle } from 'lucide-react';
+
+interface AnalysisResult {
+  requirement: string;
+  passed: boolean;
+  explanation: string;
+}
+
+interface AnalysisReport {
+  results: AnalysisResult[];
+  overallScore: number;
+}
+
+interface ApiResponse {
+  success: boolean;
+  postData?: {
+    caption: string;
+    mediaType: string;
+    mediaUrl: string;
+  };
+  analysis?: AnalysisReport;
+  error?: string;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [postUrl, setPostUrl] = useState('');
+  const [requirements, setRequirements] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [results, setResults] = useState<ApiResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!postUrl.trim() || !requirements.trim()) {
+      setError('Please provide both an Instagram URL and requirements.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setResults(null);
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          postUrl: postUrl.trim(),
+          requirements: requirements.trim(),
+        }),
+      });
+
+      const data: ApiResponse = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to analyze post');
+      }
+
+      setResults(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 dark:from-gray-900 dark:to-gray-800">
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <Instagram className="h-8 w-8 text-purple-600" />
+            <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
+              Instagram Content Compliance Checker
+            </h1>
+          </div>
+          <p className="text-lg text-gray-600 dark:text-gray-300">
+            Analyze Instagram posts and stories against your custom requirements
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {/* Main Form */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Analyze Instagram Content</CardTitle>
+            <CardDescription>
+              Enter an Instagram post or story URL and your analysis requirements
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <label htmlFor="postUrl" className="block text-sm font-medium mb-2">
+                  Instagram Post/Story URL
+                </label>
+                <Input
+                  id="postUrl"
+                  type="url"
+                  placeholder="https://www.instagram.com/p/..."
+                  value={postUrl}
+                  onChange={(e) => setPostUrl(e.target.value)}
+                  className="w-full"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="requirements" className="block text-sm font-medium mb-2">
+                  Analysis Requirements (one per line)
+                </label>
+                <Textarea
+                  id="requirements"
+                  placeholder={`Example requirements:
+#ad hashtag should appear above the fold
+Mentions discount code in the first 10 seconds
+Caption contains product name
+Says "sponsored" in the audio`}
+                  value={requirements}
+                  onChange={(e) => setRequirements(e.target.value)}
+                  className="w-full min-h-[120px]"
+                />
+              </div>
+
+              <Button 
+                type="submit" 
+                disabled={isLoading}
+                className="w-full"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  'Analyze Content'
+                )}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Error Display */}
+        {error && (
+          <Alert className="mb-8 border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-800 dark:text-red-200">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Results Display */}
+        {results && results.success && results.analysis && (
+          <div className="space-y-6">
+            {/* Overall Score */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  Analysis Results
+                  <span className={`text-2xl font-bold ${getScoreColor(results.analysis.overallScore)}`}>
+                    {results.analysis.overallScore}%
+                  </span>
+                </CardTitle>
+                <CardDescription>
+                  {results.analysis.results.filter(r => r.passed).length} of {results.analysis.results.length} requirements passed
+                </CardDescription>
+              </CardHeader>
+            </Card>
+
+            {/* Individual Results */}
+            <div className="space-y-4">
+              {results.analysis.results.map((result, index) => (
+                <Card key={index} className={`border-l-4 ${
+                  result.passed 
+                    ? 'border-l-green-500 bg-green-50 dark:bg-green-900/20' 
+                    : 'border-l-red-500 bg-red-50 dark:bg-red-900/20'
+                }`}>
+                  <CardContent className="pt-4">
+                    <div className="flex items-start gap-3">
+                      {result.passed ? (
+                        <CheckCircle className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
+                      ) : (
+                        <XCircle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+                      )}
+                      <div className="flex-1">
+                        <h3 className="font-medium text-gray-900 dark:text-white mb-1">
+                          {result.requirement}
+                        </h3>
+                        <p className={`text-sm ${
+                          result.passed 
+                            ? 'text-green-700 dark:text-green-300' 
+                            : 'text-red-700 dark:text-red-300'
+                        }`}>
+                          {result.explanation}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            {/* Post Preview */}
+            {results.postData && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Post Preview</CardTitle>
+                  <CardDescription>
+                    Media Type: {results.postData.mediaType}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+                    <h4 className="font-medium mb-2">Caption:</h4>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                      {results.postData.caption}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
