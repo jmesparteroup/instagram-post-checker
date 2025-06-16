@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getInstagramPostData } from '@/lib/instagram-service';
 import { analyzeContent } from '@/lib/analysis-service';
+import { analyzeContentWithAI } from '@/lib/ai-analysis-service';
+
+// make this route have maximum time of 30 seconds
+export const maxDuration = 30
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { postUrl, requirements } = body;
+    const { postUrl, requirements, useAI = true } = body;
 
     // Validate input
     if (!postUrl || typeof postUrl !== 'string') {
@@ -38,8 +42,45 @@ export async function POST(request: NextRequest) {
     // Fetch Instagram post data
     const postData = await getInstagramPostData(postUrl);
 
-    // Analyze content against requirements
-    const analysisReport = analyzeContent(postData, requirementsArray);
+    // Analyze content against requirements using AI or rule-based approach
+    let analysisReport;
+    if (useAI) {
+      try {
+        analysisReport = await analyzeContentWithAI(postData, requirementsArray);
+        console.log('AI analysis report:', analysisReport);
+      } catch (aiError) {
+        console.warn('AI analysis failed, falling back to rule-based:', aiError);
+        // Fallback to rule-based analysis
+        const ruleBasedReport = analyzeContent(postData, requirementsArray);
+        analysisReport = {
+          ...ruleBasedReport,
+          aiPowered: false,
+          processingTime: 0,
+          model: 'rule-based-fallback',
+          results: ruleBasedReport.results.map(result => ({
+            ...result,
+            confidence: 0.7,
+            evidence: [],
+            reasoning: 'Analyzed using rule-based fallback due to AI service error',
+          })),
+        };
+      }
+    } else {
+      // Use rule-based analysis
+      const ruleBasedReport = analyzeContent(postData, requirementsArray);
+      analysisReport = {
+        ...ruleBasedReport,
+        aiPowered: false,
+        processingTime: 0,
+        model: 'rule-based',
+        results: ruleBasedReport.results.map(result => ({
+          ...result,
+          confidence: 0.8,
+          evidence: [],
+          reasoning: 'Analyzed using rule-based approach',
+        })),
+      };
+    }
 
     // Return successful response
     return NextResponse.json({
@@ -53,7 +94,6 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Analysis error:', error);
     
     // Handle specific error types
     if (error instanceof Error) {

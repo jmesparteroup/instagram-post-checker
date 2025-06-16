@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:apify": "node test-apify.js"
+    "test:apify": "node test-apify.js",
+    "test:ai": "node test-ai-simple.js"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",
@@ -16,9 +17,11 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.515.0",
     "next": "15.3.3",
+    "openai": "^5.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "tailwind-merge": "^3.3.1"
+    "tailwind-merge": "^3.3.1",
+    "zod": "^3.25.64"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

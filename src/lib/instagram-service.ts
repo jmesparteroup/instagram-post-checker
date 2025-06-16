@@ -5,6 +5,8 @@ export interface InstagramPostData {
   mediaType: 'video' | 'image';
   mediaUrl: string;
   transcript: string;
+  hashtags: string[];
+  altText: string;
 }
 
 interface ApifyInstagramResult {
@@ -25,6 +27,7 @@ interface ApifyInstagramResult {
   locationName?: string;
   hashtags?: string[];
   mentions?: string[];
+  alt?: string;
 }
 
 /**
@@ -131,6 +134,10 @@ function transformApifyData(data: ApifyInstagramResult): InstagramPostData {
   // Extract caption
   const caption = data.caption || '';
 
+  // Extract hashtags and alt text
+  const hashtags = data.hashtags || [];
+  const altText = data.alt || '';
+
   // Generate mock transcript for videos
   // In a real implementation, you would use a speech-to-text service like:
   // - Google Cloud Speech-to-Text
@@ -144,6 +151,8 @@ function transformApifyData(data: ApifyInstagramResult): InstagramPostData {
     mediaType,
     mediaUrl,
     transcript,
+    hashtags,
+    altText,
   };
 }
 
@@ -207,6 +216,10 @@ What's your go-to post-workout snack? Let me know in the comments! 👇
     mediaType: 'video',
     mediaUrl: 'https://example.com/sample-video.mp4',
     
-    transcript: `Hey everyone, welcome back to my channel! Today I'm super excited to share with you guys these amazing new protein bars from Sneak Eats. I've been testing them out for the past two weeks and honestly, they are incredible. The chocolate chip flavor is absolutely my favorite - it tastes like a dessert but it's actually packed with 20 grams of protein. Perfect for after my workouts. I've been having one right after I hit the gym and it keeps me satisfied for hours. The texture is so good too, not chalky at all like some other protein bars I've tried. If you guys want to try them out, I have a special discount code for you - it's SAVE20 and it'll get you 20% off your first order. The link is in my bio. Seriously, these are game changers for anyone who's into fitness or just wants a healthy snack option. Let me know in the comments what your favorite post-workout snack is!`
+    transcript: `Hey everyone, welcome back to my channel! Today I'm super excited to share with you guys these amazing new protein bars from Sneak Eats. I've been testing them out for the past two weeks and honestly, they are incredible. The chocolate chip flavor is absolutely my favorite - it tastes like a dessert but it's actually packed with 20 grams of protein. Perfect for after my workouts. I've been having one right after I hit the gym and it keeps me satisfied for hours. The texture is so good too, not chalky at all like some other protein bars I've tried. If you guys want to try them out, I have a special discount code for you - it's SAVE20 and it'll get you 20% off your first order. The link is in my bio. Seriously, these are game changers for anyone who's into fitness or just wants a healthy snack option. Let me know in the comments what your favorite post-workout snack is!`,
+    
+    hashtags: ['ad', 'sneakeats', 'proteinbar', 'fitness', 'postworkout', 'healthyeating', 'sponsored', 'fitnessmotivation', 'nutrition', 'gains'],
+    
+    altText: 'Person holding a chocolate chip protein bar with gym equipment in the background'
   };
 } 
