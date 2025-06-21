@@ -35,7 +35,7 @@ const AnalysisResponseSchema = z.object({
 
 // Configuration constants with environment variable support
 const AI_CONFIG = {
-  model: (process.env.OPENAI_MODEL || 'gpt-4o-mini') as 'gpt-4o-mini' | 'gpt-4o' | 'gpt-4-turbo' | 'gpt-3.5-turbo',
+  model: (process.env.OPENAI_MODEL || 'gpt-4.1-mini') as 'gpt-4o-mini' | 'gpt-4o' | 'gpt-4-turbo' | 'gpt-3.5-turbo',
   maxTokens: 4000,
   temperature: 0.1, // Low temperature for consistent analysis
   maxRetries: 3,
@@ -87,13 +87,13 @@ export class AIAnalysisService {
       const cacheKey = analysisCache.generateKey(postData, requirements);
       const cachedResult = analysisCache.get<AIAnalysisReport>(cacheKey);
       
-      if (cachedResult) {
-        console.log('Cache hit: returning cached analysis result');
-        return {
-          ...cachedResult,
-          processingTime: Date.now() - startTime, // Update processing time
-        };
-      }
+      // if (cachedResult) {
+      //   console.log('Cache hit: returning cached analysis result');
+      //   return {
+      //     ...cachedResult,
+      //     processingTime: Date.now() - startTime, // Update processing time
+      //   };
+      // }
 
       // Check rate limits
       await this.checkRateLimit();
@@ -119,7 +119,6 @@ export class AIAnalysisService {
 
       // Cache the result
       analysisCache.set(cacheKey, report);
-      console.log('Analysis result cached for future requests');
 
       return report;
 
@@ -127,7 +126,6 @@ export class AIAnalysisService {
       console.error('AI analysis failed:', error);
 
       if (this.fallbackToRulesBased) {
-        console.log('Falling back to rule-based analysis');
         return this.fallbackAnalysis(postData, requirements, startTime);
       }
 
@@ -142,7 +140,6 @@ export class AIAnalysisService {
     postData: InstagramPostData,
     requirements: string[]
   ): Promise<AIAnalysisResult[]> {
-    console.log('Post Data', postData);
     const systemPrompt = this.buildSystemPrompt();
     const userPrompt = this.buildUserPrompt(postData, requirements);
 
@@ -206,13 +203,6 @@ export class AIAnalysisService {
 
 Your task is to analyze Instagram posts (captions, transcripts, media) against specific compliance requirements and provide detailed, accurate assessments.
 
-Key Analysis Areas:
-1. **FTC Disclosure Requirements**: #ad, #sponsored, "paid partnership" disclosures
-2. **Above the Fold Content**: First 150 characters of captions (visible without "more" click)
-3. **Audio/Video Content**: Spoken disclosures and mentions in transcripts
-4. **Hashtag Compliance**: Required hashtags and their placement
-5. **Timing Requirements**: Disclosures within first 10 seconds of video content
-
 Analysis Guidelines:
 - Be precise about disclosure placement and visibility
 - Consider Instagram's UI limitations (character limits, "more" button)
@@ -223,6 +213,7 @@ Analysis Guidelines:
 
 For each requirement, provide:
 - Clear pass/fail determination
+- Brief explanation of the result
 - Confidence score (0.0-1.0) based on evidence clarity
 - Specific evidence quotes from the content
 - Detailed reasoning explaining your decision
@@ -246,7 +237,7 @@ ${postData.hashtags.length > 0 ? postData.hashtags.map(tag => `#${tag}`).join(' 
 ${postData.altText || 'No alt text available'}
 
 **TRANSCRIPT (for ${postData.mediaType}):**
-${postData.transcript || 'No transcript available'}
+${postData.transcript || 'No transcript available'} 
 
 **MEDIA TYPE:** ${postData.mediaType}
 
@@ -282,7 +273,6 @@ Please analyze each requirement thoroughly and provide your assessment with evid
           RATE_LIMIT_CONFIG.maxBackoffMs
         );
         
-        console.log(`Rate limited, retrying in ${backoffMs}ms (attempt ${attempt}/${AI_CONFIG.maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, backoffMs));
         
         return this.callOpenAIWithRetry(params, attempt + 1);
@@ -291,7 +281,6 @@ Please analyze each requirement thoroughly and provide your assessment with evid
       // For other errors, retry with shorter backoff
       if (attempt < AI_CONFIG.maxRetries) {
         const backoffMs = 1000 * attempt;
-        console.log(`API error, retrying in ${backoffMs}ms (attempt ${attempt}/${AI_CONFIG.maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, backoffMs));
         
         return this.callOpenAIWithRetry(params, attempt + 1);
@@ -315,7 +304,6 @@ Please analyze each requirement thoroughly and provide your assessment with evid
 
     if (requestCount >= RATE_LIMIT_CONFIG.maxRequestsPerMinute) {
       const waitTime = 60000 - (now - lastResetTime);
-      console.log(`Rate limit reached, waiting ${waitTime}ms`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
       
       // Reset after waiting

@@ -3,8 +3,8 @@ import { getInstagramPostData } from '@/lib/instagram-service';
 import { analyzeContent } from '@/lib/analysis-service';
 import { analyzeContentWithAI } from '@/lib/ai-analysis-service';
 
-// make this route have maximum time of 30 seconds
-export const maxDuration = 30
+// make this route have maximum time of 60 seconds
+export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
   try {
