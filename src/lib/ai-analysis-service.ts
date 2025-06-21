@@ -87,13 +87,12 @@ export class AIAnalysisService {
       const cacheKey = analysisCache.generateKey(postData, requirements);
       const cachedResult = analysisCache.get<AIAnalysisReport>(cacheKey);
       
-      // if (cachedResult) {
-      //   console.log('Cache hit: returning cached analysis result');
-      //   return {
-      //     ...cachedResult,
-      //     processingTime: Date.now() - startTime, // Update processing time
-      //   };
-      // }
+      if (cachedResult) {
+        return {
+          ...cachedResult,
+          processingTime: Date.now() - startTime, // Update processing time
+        };
+      }
 
       // Check rate limits
       await this.checkRateLimit();

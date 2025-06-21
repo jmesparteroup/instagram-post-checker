@@ -34,6 +34,7 @@ global.testUtils = {
     altText: 'Test alt text description',
     transcript: 'This is a test video transcript mentioning sponsored content',
     mediaType: 'video' as const,
+    mediaUrl: 'https://example.com/test-video.mp4',
   },
   
   // Mock requirements for testing
