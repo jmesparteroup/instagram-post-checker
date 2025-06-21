@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle, XCircle, Loader2, Instagram, AlertCircle } from 'lucide-react';
+import ProgressIndicator, { ProgressStep } from '@/components/ui/progress-indicator';
 
 interface AnalysisResult {
   requirement: string;
@@ -30,14 +31,57 @@ interface ApiResponse {
   error?: string;
 }
 
+interface ProgressUpdate {
+  step: 'validating' | 'fetching' | 'transcribing' | 'analyzing' | 'complete' | 'error';
+  message: string;
+  progress: number;
+  data?: unknown;
+  error?: string;
+}
+
 export default function Home() {
   const [postUrl, setPostUrl] = useState('');
   const [requirements, setRequirements] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [useRealTime, setUseRealTime] = useState(true);
   const [results, setResults] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Real-time progress state
+  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
+  const [overallProgress, setOverallProgress] = useState(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const initializeProgressSteps = (hasVideo: boolean = false): ProgressStep[] => [
+    {
+      id: 'validating',
+      label: 'Validating Input',
+      status: 'pending',
+    },
+    {
+      id: 'fetching',
+      label: 'Fetching Instagram Data',
+      status: 'pending',
+    },
+    ...(hasVideo ? [{
+      id: 'transcribing',
+      label: 'Transcribing Video',
+      status: 'pending' as const,
+    }] : []),
+    {
+      id: 'analyzing',
+      label: 'AI Content Analysis',
+      status: 'pending' as const,
+    },
+  ];
+
+  const updateProgressStep = (stepId: string, updates: Partial<ProgressStep>) => {
+    setProgressSteps(prev => prev.map(step => 
+      step.id === stepId ? { ...step, ...updates } : step
+    ));
+  };
+
+  const handleRealtimeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!postUrl.trim() || !requirements.trim()) {
@@ -48,6 +92,124 @@ export default function Home() {
     setIsLoading(true);
     setError(null);
     setResults(null);
+    setOverallProgress(0);
+    setProgressSteps(initializeProgressSteps());
+
+    // Close any existing EventSource
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    try {
+
+      // Since EventSource only supports GET, we'll need to make a POST request manually
+      // and then parse the stream
+      const response = await fetch('/api/analyze-stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          postUrl: postUrl.trim(),
+          requirements: requirements.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No response body');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+                     if (line.startsWith('data: ')) {
+             try {
+               const data: ProgressUpdate = JSON.parse(line.slice(6));
+               handleProgressUpdate(data);
+             } catch {
+               console.warn('Failed to parse SSE data:', line);
+             }
+           }
+        }
+      }
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      setProgressSteps(prev => prev.map(step => ({ ...step, status: 'error' as const })));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleProgressUpdate = (update: ProgressUpdate) => {
+    console.log('Progress update:', update);
+    
+    setOverallProgress(update.progress);
+
+    // Update the current step
+    if (update.step !== 'error' && update.step !== 'complete') {
+      updateProgressStep(update.step, {
+        status: 'active',
+        message: update.message,
+        progress: update.progress,
+      });
+
+      // Mark previous steps as completed
+      const stepOrder = ['validating', 'fetching', 'transcribing', 'analyzing'];
+      const currentIndex = stepOrder.indexOf(update.step);
+      
+      for (let i = 0; i < currentIndex; i++) {
+        updateProgressStep(stepOrder[i], { status: 'completed' });
+      }
+    }
+
+    // Handle completion
+    if (update.step === 'complete' && update.data) {
+      setResults(update.data as ApiResponse);
+      setProgressSteps(prev => prev.map(step => ({ ...step, status: 'completed' as const })));
+    }
+
+    // Handle errors
+    if (update.step === 'error') {
+      setError(update.error || 'An error occurred');
+      setProgressSteps(prev => prev.map(step => ({ 
+        ...step, 
+        status: step.status === 'active' ? 'error' as const : step.status 
+      })));
+    }
+
+    // Update progress steps based on fetched data
+    if (update.step === 'fetching' && update.data && typeof update.data === 'object' && 'mediaType' in update.data && update.data.mediaType === 'video') {
+      setProgressSteps(initializeProgressSteps(true));
+    }
+  };
+
+  const handleLegacySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!postUrl.trim() || !requirements.trim()) {
+      setError('Please provide both an Instagram URL and requirements.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setResults(null);
+    setProgressSteps([]);
+    setOverallProgress(0);
 
     try {
       const response = await fetch('/api/analyze', {
@@ -68,12 +230,15 @@ export default function Home() {
       }
 
       setResults(data);
+      setOverallProgress(100);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const handleSubmit = useRealTime ? handleRealtimeSubmit : handleLegacySubmit;
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600';
@@ -138,6 +303,20 @@ Says "sponsored" in the audio`}
                 />
               </div>
 
+              {/* Real-time toggle */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="realtime"
+                  checked={useRealTime}
+                  onChange={(e) => setUseRealTime(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                <label htmlFor="realtime" className="text-sm text-gray-700 dark:text-gray-300">
+                  Enable real-time progress updates
+                </label>
+              </div>
+
               <Button 
                 type="submit" 
                 disabled={isLoading}
@@ -146,7 +325,7 @@ Says "sponsored" in the audio`}
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Analyzing...
+                    {useRealTime ? 'Processing...' : 'Analyzing...'}
                   </>
                 ) : (
                   'Analyze Content'
@@ -155,6 +334,15 @@ Says "sponsored" in the audio`}
             </form>
           </CardContent>
         </Card>
+
+        {/* Real-time Progress Indicator */}
+        {useRealTime && isLoading && progressSteps.length > 0 && (
+          <ProgressIndicator
+            steps={progressSteps}
+            overallProgress={overallProgress}
+            className="mb-8"
+          />
+        )}
 
         {/* Error Display */}
         {error && (

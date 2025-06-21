@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { InstagramPostData } from './instagram-service';
-import { AnalysisResult, AnalysisReport } from './analysis-service';
+import { AnalysisResult, AnalysisReport, analyzeContent } from './analysis-service';
 import { analysisCache } from './cache-service';
 
 // Enhanced interfaces with AI features
@@ -360,6 +360,77 @@ Please analyze each requirement thoroughly and provide your assessment with evid
       model: 'rule-based-fallback',
     };
   }
+
+  /**
+   * Performs AI analysis with progress callback
+   */
+  public async performAIAnalysisWithProgress(
+    postData: InstagramPostData,
+    requirements: string[],
+    onProgress: (message: string, progress: number) => void
+  ): Promise<AIAnalysisResult[]> {
+    onProgress('Building AI prompts...', 45);
+    
+    const systemPrompt = this.buildSystemPrompt();
+    const userPrompt = this.buildUserPrompt(postData, requirements);
+    
+    onProgress('Sending request to OpenAI...', 60);
+    
+    const response = await this.callOpenAIWithRetry({
+      model: AI_CONFIG.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: AI_CONFIG.maxTokens,
+      temperature: AI_CONFIG.temperature,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'instagram_compliance_analysis',
+          schema: {
+            type: 'object',
+            properties: {
+              results: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    requirement: { type: 'string' },
+                    passed: { type: 'boolean' },
+                    explanation: { type: 'string' },
+                    confidence: { type: 'number', minimum: 0, maximum: 1 },
+                    evidence: { type: 'array', items: { type: 'string' } },
+                    reasoning: { type: 'string' },
+                  },
+                  required: ['requirement', 'passed', 'explanation', 'confidence', 'evidence', 'reasoning'],
+                  additionalProperties: false,
+                },
+              },
+              overallAssessment: { type: 'string' },
+            },
+            required: ['results', 'overallAssessment'],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    onProgress('Processing AI response...', 80);
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error('No response content from OpenAI');
+    }
+
+    onProgress('Parsing AI analysis results...', 85);
+
+    // Parse and validate response
+    const parsedResponse = JSON.parse(content);
+    const validatedResponse = AnalysisResponseSchema.parse(parsedResponse);
+
+    return validatedResponse.results;
+  }
 }
 
 /**
@@ -371,4 +442,80 @@ export async function analyzeContentWithAI(
 ): Promise<AIAnalysisReport> {
   const service = new AIAnalysisService();
   return service.analyzeContent(postData, requirements);
+}
+
+/**
+ * Convenience function for backward compatibility with progress callback
+ */
+export async function analyzeContentWithAIProgress(
+  postData: InstagramPostData,
+  requirements: string[],
+  onProgress: (message: string, progress: number) => void
+): Promise<AIAnalysisReport> {
+  const startTime = Date.now();
+  const service = new AIAnalysisService();
+  
+  onProgress('Initializing AI analysis...', 0);
+  
+  try {
+    // Check cache first
+    onProgress('Checking analysis cache...', 20);
+    const cacheKey = analysisCache.generateKey(postData, requirements);
+    const cachedResult = analysisCache.get<AIAnalysisReport>(cacheKey);
+    
+    if (cachedResult) {
+      onProgress('Found cached analysis result', 100);
+      return {
+        ...cachedResult,
+        processingTime: Date.now() - startTime,
+      };
+    }
+
+    // Perform AI analysis with progress updates
+    onProgress('Starting AI analysis...', 40);
+    const aiResults = await service.performAIAnalysisWithProgress(postData, requirements, onProgress);
+
+    // Calculate overall score
+    onProgress('Calculating analysis scores...', 90);
+    const passedCount = aiResults.filter(r => r.passed).length;
+    const overallScore = requirements.length > 0 
+      ? Math.round((passedCount / requirements.length) * 100) 
+      : 0;
+
+    const processingTime = Date.now() - startTime;
+
+    const report: AIAnalysisReport = {
+      results: aiResults,
+      overallScore,
+      aiPowered: true,
+      processingTime,
+      model: AI_CONFIG.model,
+    };
+
+    // Cache the result
+    onProgress('Caching analysis results...', 95);
+    analysisCache.set(cacheKey, report);
+
+    onProgress('AI analysis completed', 100);
+    return report;
+
+  } catch (error) {
+    console.error('AI analysis failed:', error);
+
+    onProgress('AI failed, using rule-based fallback...', 50);
+         // Fallback to rule-based analysis
+     const ruleBasedReport = analyzeContent(postData, requirements);
+     return {
+       ...ruleBasedReport,
+       aiPowered: false,
+       processingTime: Date.now() - startTime,
+       model: 'rule-based-fallback',
+       results: ruleBasedReport.results.map((result: AnalysisResult) => ({
+         ...result,
+         confidence: 0.7,
+         evidence: [],
+         reasoning: 'Analyzed using rule-based fallback due to AI service error',
+       })),
+     };
+  }
 } 

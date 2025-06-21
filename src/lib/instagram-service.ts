@@ -1,8 +1,6 @@
 import { ApifyClient } from 'apify-client';
-import OpenAI from 'openai';
 import { join } from 'path';
 import fs from 'fs/promises';
-import * as fsSync from 'fs';
 import os from 'os';
 
 export interface InstagramPostData {
@@ -33,6 +31,423 @@ interface ApifyInstagramResult {
   hashtags?: string[];
   mentions?: string[];
   alt?: string;
+}
+
+/**
+ * Instagram data fetching service with progress callback support
+ */
+export async function getInstagramPostDataWithProgress(
+  url: string,
+  onProgress: (message: string, progress: number) => void
+): Promise<InstagramPostData> {
+  // Validate Instagram URL
+  onProgress('Validating Instagram URL...', 0);
+  if (!isValidInstagramUrl(url)) {
+    throw new Error('Invalid Instagram URL provided. Please provide a valid Instagram post or reel URL.');
+  }
+
+  // Check for API key
+  const apiKey = process.env.APIFY_API_KEY;
+  if (!apiKey) {
+    console.warn('APIFY_API_KEY not found, falling back to mock data');
+    onProgress('Using mock data (no API key found)...', 50);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
+    onProgress('Mock data loaded', 100);
+    return getMockData();
+  }
+
+  try {
+    // Initialize Apify client
+    onProgress('Initializing Instagram scraper...', 10);
+    const client = new ApifyClient({ token: apiKey });
+
+    // Prepare input for Instagram scraper
+    const input = {
+      directUrls: [url],
+      resultsType: 'posts',
+      resultsLimit: 1,
+      addParentData: false,
+    };
+
+    onProgress('Starting Instagram data extraction...', 20);
+    console.log('Fetching Instagram data from Apify...');
+
+    // Run the Instagram scraper
+    const run = await client.actor('apify/instagram-scraper').call(input, {
+      timeout: 60000, // 60 seconds timeout
+    });
+
+    onProgress('Retrieving scraped data...', 60);
+
+    // Get the results from the dataset
+    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+
+    if (!items || items.length === 0) {
+      throw new Error('No data found for the provided Instagram URL. The post might be private or the URL might be invalid.');
+    }
+
+    const postData = items[0] as ApifyInstagramResult;
+    
+    onProgress('Processing Instagram data...', 80);
+    
+    // Transform Apify data to our format with progress callback
+    return await transformApifyDataWithProgress(postData, onProgress);
+
+  } catch (error) {
+    console.error('Error fetching Instagram data:', error);
+    
+    // If it's an API-related error, provide specific feedback
+    if (error instanceof Error) {
+      if (error.message.includes('timeout')) {
+        throw new Error('Request timed out. The Instagram post might be taking too long to scrape. Please try again.');
+      }
+      if (error.message.includes('credits') || error.message.includes('quota')) {
+        throw new Error('Apify API quota exceeded. Please check your Apify account credits.');
+      }
+      if (error.message.includes('unauthorized') || error.message.includes('token')) {
+        throw new Error('Invalid Apify API key. Please check your APIFY_API_KEY environment variable.');
+      }
+    }
+    
+    // For development/testing, fall back to mock data if API fails
+    console.warn('Falling back to mock data due to API error');
+    onProgress('API error, using mock data...', 50);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
+    onProgress('Mock data loaded', 100);
+    return getMockData();
+  }
+}
+
+function isValidInstagramUrl(url: string): boolean {
+  const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?/;
+  return instagramUrlPattern.test(url);
+}
+
+async function transformApifyDataWithProgress(
+  data: ApifyInstagramResult,
+  onProgress: (message: string, progress: number) => void
+): Promise<InstagramPostData> {
+  // Determine media type
+  const mediaType: 'video' | 'image' = data.type === 'Video' || data.videoUrl ? 'video' : 'image';
+  
+  onProgress(`Processing ${mediaType} content...`, 85);
+  
+  // Get media URL
+  let mediaUrl = '';
+  if (mediaType === 'video') {
+    mediaUrl = data.videoUrl || data.displayUrl || data.url || '';
+  } else {
+    mediaUrl = data.imageUrl || data.displayUrl || data.url || '';
+  }
+
+  // Extract caption
+  const caption = data.caption || '';
+
+  // Extract hashtags and alt text
+  const hashtags = data.hashtags || [];
+  const altText = data.alt || '';
+
+  // Get transcript for videos using Whisper API
+  let transcript = '';
+  if (mediaType === 'video' && mediaUrl) {
+    try {
+      onProgress('Transcribing video content...', 90);
+      transcript = await getVideoTranscriptWithProgress(mediaUrl, onProgress);
+    } catch (error) {
+      console.error('Error transcribing video:', error);
+      
+      // Provide a more helpful message based on the error
+      if (error instanceof Error && error.message.includes('download')) {
+        transcript = 'Instagram video transcription is not available. Instagram restricts direct video downloads.';
+      } else {
+        transcript = 'Transcription failed. Please try again later.';
+      }
+      
+      // Log the issue for debugging
+      console.warn(`Using fallback transcript for video: ${mediaUrl}`);
+    }
+  }
+
+  onProgress('Finalizing Instagram data...', 95);
+
+  return {
+    caption,
+    mediaType,
+    mediaUrl,
+    transcript,
+    hashtags,
+    altText,
+  };
+}
+
+/**
+ * Downloads a video from a URL to a temporary file with progress callback
+ */
+async function downloadVideoWithProgress(
+  url: string,
+  onProgress: (message: string, progress: number) => void
+): Promise<string> {
+  try {
+    // Create temp directory if it doesn't exist
+    const tempDir = join(os.tmpdir(), 'instagram-checker');
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    // Create a temporary file path
+    const tempFilePath = join(tempDir, `video-${Date.now()}.mp4`);
+    
+    console.log(`Downloading video from ${url} to ${tempFilePath}`);
+    onProgress('Attempting video download...', 91);
+    
+    // Try direct download first
+    try {
+      await downloadVideoDirectWithProgress(url, tempFilePath, onProgress);
+      return tempFilePath;
+    } catch (directErr) {
+      const directError = directErr instanceof Error ? directErr : new Error(String(directErr));
+      console.warn('Direct download failed, trying proxy service:', directError.message);
+      onProgress('Direct download failed, trying proxy...', 92);
+      
+      // Try proxy service if direct download fails
+      try {
+        await downloadVideoWithProxyProgress(url, tempFilePath, onProgress);
+        return tempFilePath;
+      } catch (proxyErr) {
+        const proxyError = proxyErr instanceof Error ? proxyErr : new Error(String(proxyErr));
+        console.warn('Proxy download failed:', proxyError.message);
+        throw new Error(`Both direct and proxy downloads failed. Direct: ${directError.message}, Proxy: ${proxyError.message}`);
+      }
+    }
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error('Error downloading video:', error);
+    throw new Error(`Failed to download video for transcription: ${error.message}`);
+  }
+}
+
+/**
+ * Direct video download with progress callback
+ */
+async function downloadVideoDirectWithProgress(
+  url: string,
+  tempFilePath: string,
+  onProgress: (message: string, progress: number) => void
+): Promise<void> {
+  const maxRetries = 3; // Reduced retries for faster feedback
+  let retryCount = 0;
+  let lastError: Error | null = null;
+  
+  while (retryCount < maxRetries) {
+    try {
+      if (retryCount > 0) {
+        onProgress(`Retrying download (${retryCount + 1}/${maxRetries})...`, 91);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // Reduced timeout
+      
+      const response = await fetch(url, { 
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'video/mp4,video/webm,video/*;q=0.9,*/*;q=0.8',
+          'Referer': 'https://www.instagram.com/',
+        }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const buffer = await response.arrayBuffer();
+      
+      if (buffer.byteLength === 0) {
+        throw new Error('Response body is empty');
+      }
+      
+      await fs.writeFile(tempFilePath, Buffer.from(buffer));
+      
+      const stats = await fs.stat(tempFilePath);
+      if (stats.size === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+      
+      onProgress('Video downloaded successfully', 93);
+      console.log(`Direct download successful: ${stats.size} bytes`);
+      return;
+      
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      lastError = error;
+      retryCount++;
+      
+      if (retryCount < maxRetries) {
+        console.warn(`Direct download attempt ${retryCount}/${maxRetries} failed: ${error.message}`);
+      }
+    }
+  }
+  
+  throw lastError || new Error(`Direct download failed after ${maxRetries} retries`);
+}
+
+/**
+ * Proxy video download with progress callback
+ */
+async function downloadVideoWithProxyProgress(
+  url: string,
+  tempFilePath: string,
+  onProgress: (message: string, progress: number) => void
+): Promise<void> {
+  const proxyServiceUrl = process.env.VIDEO_PROXY_SERVICE_URL;
+  
+  if (!proxyServiceUrl) {
+    throw new Error('No proxy service configured. Set VIDEO_PROXY_SERVICE_URL environment variable.');
+  }
+  
+  onProgress('Downloading via proxy service...', 92);
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  
+  try {
+    const proxyUrl = `${proxyServiceUrl}?url=${encodeURIComponent(url)}`;
+    const response = await fetch(proxyUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Instagram-Checker/1.0',
+      }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`Proxy service returned ${response.status}: ${response.statusText}`);
+    }
+    
+    const buffer = await response.arrayBuffer();
+    
+    if (buffer.byteLength === 0) {
+      throw new Error('Proxy response body is empty');
+    }
+    
+    await fs.writeFile(tempFilePath, Buffer.from(buffer));
+    
+    const stats = await fs.stat(tempFilePath);
+    if (stats.size === 0) {
+      throw new Error('Proxy downloaded file is empty');
+    }
+    
+    onProgress('Video downloaded via proxy', 93);
+    console.log(`Proxy download successful: ${stats.size} bytes`);
+    
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+/**
+ * Transcribes a video using OpenAI's Whisper API with progress callback
+ */
+async function getVideoTranscriptWithProgress(
+  videoUrl: string,
+  onProgress: (message: string, progress: number) => void
+): Promise<string> {
+  // Check for OpenAI API key
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    throw new Error('OPENAI_API_KEY not found. Please set this environment variable to enable transcription.');
+  }
+
+  let tempFilePath = '';
+  
+  try {
+    onProgress('Downloading video for transcription...', 90);
+    
+    // Download the video
+    tempFilePath = await downloadVideoWithProgress(videoUrl, onProgress);
+    
+    onProgress('Sending video to OpenAI Whisper...', 95);
+    
+    // Check file size (Whisper API has a 25MB limit)
+    const stats = await fs.stat(tempFilePath);
+    const fileSizeInMB = stats.size / (1024 * 1024);
+    
+    if (fileSizeInMB > 25) {
+      throw new Error(`Video file is too large (${fileSizeInMB.toFixed(1)}MB). OpenAI Whisper API has a 25MB limit.`);
+    }
+    
+    console.log(`Transcribing video file: ${tempFilePath} (${fileSizeInMB.toFixed(1)}MB)`);
+    
+    // Create form data for the API request
+    const formData = new FormData();
+    const fileBuffer = await fs.readFile(tempFilePath);
+    const blob = new Blob([fileBuffer], { type: 'video/mp4' });
+    formData.append('file', blob, 'video.mp4');
+    formData.append('model', 'whisper-1');
+    formData.append('response_format', 'text');
+    
+    // Make the API request
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+    
+    const transcript = await response.text();
+    
+    if (!transcript || transcript.trim().length === 0) {
+      throw new Error('Transcription returned empty result');
+    }
+    
+    console.log(`Transcription successful: ${transcript.length} characters`);
+    return transcript.trim();
+    
+  } catch (error) {
+    console.error('Error in video transcription:', error);
+    throw error;
+  } finally {
+    // Clean up temporary file
+    if (tempFilePath) {
+      try {
+        await fs.unlink(tempFilePath);
+        console.log(`Cleaned up temporary file: ${tempFilePath}`);
+      } catch (cleanupError) {
+        console.warn(`Failed to clean up temporary file: ${tempFilePath}`, cleanupError);
+      }
+    }
+  }
+}
+
+function getMockData(): InstagramPostData {
+  // Fallback mock data for development/testing
+  return {
+    caption: `🔥 Just tried the new Sneak Eats protein bars and they're incredible! The chocolate chip flavor is my absolute favorite. Perfect for post-workout fuel! 💪 
+
+Use my code SAVE20 for 20% off your first order. Link in bio! 
+
+What's your go-to post-workout snack? Let me know in the comments! 👇
+
+#ad #sneakeats #proteinbar #fitness #postworkout #healthyeating #sponsored #fitnessmotivation #nutrition #gains`,
+    
+    mediaType: 'video',
+    mediaUrl: 'https://example.com/sample-video.mp4',
+    
+    transcript: 'This is a mock transcript. To get real transcriptions, please set up APIFY_API_KEY and OPENAI_API_KEY environment variables.',
+    
+    hashtags: ['ad', 'sneakeats', 'proteinbar', 'fitness', 'postworkout', 'healthyeating', 'sponsored', 'fitnessmotivation', 'nutrition', 'gains'],
+    
+    altText: 'Person holding a chocolate chip protein bar with gym equipment in the background'
+  };
 }
 
 /**
@@ -99,7 +514,6 @@ export async function getInstagramPostData(url: string): Promise<InstagramPostDa
       throw new Error('No data found for the provided Instagram URL. The post might be private or the URL might be invalid.');
     }
 
-
     const postData = items[0] as ApifyInstagramResult;
     
     // Transform Apify data to our format
@@ -125,11 +539,6 @@ export async function getInstagramPostData(url: string): Promise<InstagramPostDa
     console.warn('Falling back to mock data due to API error');
     return getMockData();
   }
-}
-
-function isValidInstagramUrl(url: string): boolean {
-  const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?/;
-  return instagramUrlPattern.test(url);
 }
 
 async function transformApifyData(data: ApifyInstagramResult): Promise<InstagramPostData> {
@@ -399,82 +808,65 @@ async function getVideoTranscript(videoUrl: string): Promise<string> {
     throw new Error('OPENAI_API_KEY not found. Please set this environment variable to enable transcription.');
   }
 
-  let tempFilePath: string | null = null;
+  let tempFilePath = '';
   
   try {
-    // Initialize OpenAI client
-    const openai = new OpenAI({
-      apiKey: openaiApiKey,
-    });
-
-    // Download the video to a temporary file
-    tempFilePath = await downloadVideo(videoUrl); 
+    // Download the video
+    tempFilePath = await downloadVideo(videoUrl);
     
-    console.log('Transcribing video with Whisper API...');
-    
-    // Check file size (Whisper has a 25MB limit)
+    // Check file size (Whisper API has a 25MB limit)
     const stats = await fs.stat(tempFilePath);
-    if (stats.size > 25 * 1024 * 1024) {
-      throw new Error('Video file is too large for Whisper API (25MB limit)');
+    const fileSizeInMB = stats.size / (1024 * 1024);
+    
+    if (fileSizeInMB > 25) {
+      throw new Error(`Video file is too large (${fileSizeInMB.toFixed(1)}MB). OpenAI Whisper API has a 25MB limit.`);
     }
     
-    // Use Whisper API to transcribe the video
-    const transcription = await openai.audio.transcriptions.create({
-      file: fsSync.createReadStream(tempFilePath),
-      model: 'whisper-1',
-      language: 'en', // You can make this configurable if needed
-      response_format: 'text'
+    console.log(`Transcribing video file: ${tempFilePath} (${fileSizeInMB.toFixed(1)}MB)`);
+    
+    // Create form data for the API request
+    const formData = new FormData();
+    const fileBuffer = await fs.readFile(tempFilePath);
+    const blob = new Blob([fileBuffer], { type: 'video/mp4' });
+    formData.append('file', blob, 'video.mp4');
+    formData.append('model', 'whisper-1');
+    formData.append('response_format', 'text');
+    
+    // Make the API request
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: formData,
     });
     
-    return transcription;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
     
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
+    const transcript = await response.text();
+    
+    if (!transcript || transcript.trim().length === 0) {
+      throw new Error('Transcription returned empty result');
+    }
+    
+    console.log(`Transcription successful: ${transcript.length} characters`);
+    return transcript.trim();
+    
+  } catch (error) {
     console.error('Error in video transcription:', error);
-    
-    // Provide specific error messages based on common issues
-    if (error.message.includes('API key')) {
-      throw new Error('Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable.');
-    }
-    if (error.message.includes('quota') || error.message.includes('exceeded')) {
-      throw new Error('OpenAI API quota exceeded. Please check your OpenAI account credits.');
-    }
-    if (error.message.includes('download')) {
-      throw new Error('Could not download the Instagram video. Instagram may be blocking direct video downloads.');
-    }
-    if (error.message.includes('too large')) {
-      throw new Error('Video file is too large for transcription (25MB limit).');
-    }
-    
-    throw new Error(`Failed to transcribe video: ${error.message}`);
+    throw error;
   } finally {
-    // Clean up the temporary file
+    // Clean up temporary file
     if (tempFilePath) {
-      await fs.unlink(tempFilePath).catch(err => {
-        console.warn(`Failed to delete temporary file ${tempFilePath}: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      try {
+        await fs.unlink(tempFilePath);
+        console.log(`Cleaned up temporary file: ${tempFilePath}`);
+      } catch (cleanupError) {
+        console.warn(`Failed to clean up temporary file: ${tempFilePath}`, cleanupError);
+      }
     }
   }
-}
-
-function getMockData(): InstagramPostData {
-  // Fallback mock data for development/testing
-  return {
-    caption: `🔥 Just tried the new Sneak Eats protein bars and they're incredible! The chocolate chip flavor is my absolute favorite. Perfect for post-workout fuel! 💪 
-
-Use my code SAVE20 for 20% off your first order. Link in bio! 
-
-What's your go-to post-workout snack? Let me know in the comments! 👇
-
-#ad #sneakeats #proteinbar #fitness #postworkout #healthyeating #sponsored #fitnessmotivation #nutrition #gains`,
-    
-    mediaType: 'video',
-    mediaUrl: 'https://example.com/sample-video.mp4',
-    
-    transcript: 'This is a mock transcript. To get real transcriptions, please set up APIFY_API_KEY and OPENAI_API_KEY environment variables.',
-    
-    hashtags: ['ad', 'sneakeats', 'proteinbar', 'fitness', 'postworkout', 'healthyeating', 'sponsored', 'fitnessmotivation', 'nutrition', 'gains'],
-    
-    altText: 'Person holding a chocolate chip protein bar with gym equipment in the background'
-  };
 } 
