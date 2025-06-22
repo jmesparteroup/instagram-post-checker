@@ -1,13 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
 
-interface ProgressStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'active' | 'completed' | 'error';
-  message?: string;
-  progress?: number;
-}
-
 interface ProgressUpdate {
   step: 'validating' | 'fetching' | 'transcribing' | 'analyzing' | 'complete' | 'error';
   message: string;
@@ -68,7 +60,7 @@ const analyzePostStream = async ({ postUrl, requirements, onProgress }: AnalyzeP
           if (data.step === 'error') {
             throw new Error(data.error || 'An error occurred');
           }
-        } catch (error) {
+        } catch {
           console.warn('Failed to parse SSE data:', line);
         }
       }
