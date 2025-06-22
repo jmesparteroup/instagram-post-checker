@@ -187,7 +187,6 @@ export class AIAnalysisService {
       throw new Error('No response content from OpenAI');
     }
 
-    // Parse and validate response
     const parsedResponse = JSON.parse(content);
     const validatedResponse = AnalysisResponseSchema.parse(parsedResponse);
 
@@ -209,12 +208,21 @@ Analysis Guidelines:
 - Provide specific evidence from the content
 - Consider context and intent, not just keyword matching
 - Account for common compliance mistakes and edge cases
+- Pay special attention to timing requirements when timestamped transcripts are available
+
+Timestamp Analysis:
+- When timestamps are provided, use them to verify timing-based requirements
+- "First 10 seconds" means content appearing between [00:00-00:10]
+- "At the beginning" typically means within the first 15-20 seconds
+- "Above the fold" in video context means visible/audible without user interaction (first 5-10 seconds)
+- Be precise about when specific content appears in the video timeline
+- Consider that Instagram videos may have brief intro music or logos before main content
 
 For each requirement, provide:
 - Clear pass/fail determination
 - Brief explanation of the result
 - Confidence score (0.0-1.0) based on evidence clarity
-- Specific evidence quotes from the content
+- Specific evidence quotes from the content (include timestamps when relevant)
 - Detailed reasoning explaining your decision
 
 Be thorough, accurate, and helpful in identifying compliance gaps.`;
@@ -224,6 +232,26 @@ Be thorough, accurate, and helpful in identifying compliance gaps.`;
    * Builds the user prompt with post data and requirements
    */
   private buildUserPrompt(postData: InstagramPostData, requirements: string[]): string {
+    let transcriptSection = '';
+    if (postData.mediaType === 'video') {
+      if (postData.timestampedTranscript && postData.timestampedTranscript.segments) {
+        // Build timestamped transcript with timing information
+        const timestampedText = postData.timestampedTranscript.segments
+          .map(segment => `[${this.formatTime(segment.start)}-${this.formatTime(segment.end)}]: ${segment.text.trim()}`)
+          .join('\n');
+        
+        transcriptSection = `**TRANSCRIPT (with timestamps):**
+${timestampedText}
+
+**Full transcript text:** ${postData.transcript || 'No transcript available'}`;
+      } else {
+        transcriptSection = `**TRANSCRIPT:**
+${postData.transcript || 'No transcript available'}`;
+      }
+    } else {
+      transcriptSection = `**TRANSCRIPT:** Not applicable for image content`;
+    }
+
     return `Analyze this Instagram ${postData.mediaType} post for compliance:
 
 **CAPTION:**
@@ -235,15 +263,25 @@ ${postData.hashtags.length > 0 ? postData.hashtags.map(tag => `#${tag}`).join(' 
 **ALT TEXT (Image Description):**
 ${postData.altText || 'No alt text available'}
 
-**TRANSCRIPT (for ${postData.mediaType}):**
-${postData.transcript || 'No transcript available'} 
+${transcriptSection}
 
 **MEDIA TYPE:** ${postData.mediaType}
 
 **REQUIREMENTS TO CHECK:**
 ${requirements.map((req, index) => `${index + 1}. ${req}`).join('\n')}
 
-Please analyze each requirement thoroughly and provide your assessment with evidence and reasoning. Consider all available content including caption, hashtags, alt text, and transcript.`;
+IMPORTANT: When analyzing requirements that mention timing (e.g., "within the first X seconds", "at the beginning", "above the fold"), pay close attention to the timestamps provided in the transcript. Use the timestamp format [MM:SS-MM:SS] to determine when specific content appears in the video.
+
+Please analyze each requirement thoroughly and provide your assessment with evidence and reasoning. Consider all available content including caption, hashtags, alt text, and transcript with timing information.`;
+  }
+
+  /**
+   * Helper method to format seconds into MM:SS format
+   */
+  private formatTime(seconds: number): string {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
   }
 
   /**

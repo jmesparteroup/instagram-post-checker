@@ -3,11 +3,31 @@ import { join } from 'path';
 import fs from 'fs/promises';
 import os from 'os';
 
+export interface WhisperWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface WhisperSegment {
+  text: string;
+  start: number;
+  end: number;
+  words?: WhisperWord[];
+}
+
+export interface WhisperTranscription {
+  text: string;
+  segments: WhisperSegment[];
+  words?: WhisperWord[];
+}
+
 export interface InstagramPostData {
   caption: string;
   mediaType: 'video' | 'image';
   mediaUrl: string;
   transcript: string;
+  timestampedTranscript?: WhisperTranscription;
   hashtags: string[];
   altText: string;
 }
@@ -149,10 +169,13 @@ async function transformApifyDataWithProgress(
 
   // Get transcript for videos using Whisper API
   let transcript = '';
+  let timestampedTranscript: WhisperTranscription | undefined;
   if (mediaType === 'video' && mediaUrl) {
     try {
       onProgress('Transcribing video content...', 90);
-      transcript = await getVideoTranscriptWithProgress(mediaUrl, onProgress);
+      const transcriptionResult = await getVideoTranscriptWithProgress(mediaUrl, onProgress);
+      transcript = transcriptionResult.transcript;
+      timestampedTranscript = transcriptionResult.timestampedTranscript;
     } catch (error) {
       console.error('Error transcribing video:', error);
       
@@ -175,6 +198,7 @@ async function transformApifyDataWithProgress(
     mediaType,
     mediaUrl,
     transcript,
+    timestampedTranscript,
     hashtags,
     altText,
   };
@@ -349,12 +373,12 @@ async function downloadVideoWithProxyProgress(
 }
 
 /**
- * Transcribes a video using OpenAI's Whisper API with progress callback
+ * Transcribes a video using OpenAI's Whisper API with progress callback and timestamps
  */
 async function getVideoTranscriptWithProgress(
   videoUrl: string,
   onProgress: (message: string, progress: number) => void
-): Promise<string> {
+): Promise<{ transcript: string; timestampedTranscript: WhisperTranscription }> {
   // Check for OpenAI API key
   const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!openaiApiKey) {
@@ -381,13 +405,15 @@ async function getVideoTranscriptWithProgress(
     
     console.log(`Transcribing video file: ${tempFilePath} (${fileSizeInMB.toFixed(1)}MB)`);
     
-    // Create form data for the API request
+    // Create form data for the API request with verbose_json format to get timestamps
     const formData = new FormData();
     const fileBuffer = await fs.readFile(tempFilePath);
     const blob = new Blob([fileBuffer], { type: 'video/mp4' });
     formData.append('file', blob, 'video.mp4');
     formData.append('model', 'whisper-1');
-    formData.append('response_format', 'text');
+    formData.append('response_format', 'verbose_json');
+    formData.append('timestamp_granularities[]', 'word');
+    formData.append('timestamp_granularities[]', 'segment');
     
     // Make the API request
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -403,14 +429,19 @@ async function getVideoTranscriptWithProgress(
       throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
     }
     
-    const transcript = await response.text();
+    const whisperResponse = await response.json() as WhisperTranscription;
     
-    if (!transcript || transcript.trim().length === 0) {
+    if (!whisperResponse.text || whisperResponse.text.trim().length === 0) {
       throw new Error('Transcription returned empty result');
     }
+
+    console.log('Whisper response:', whisperResponse);
     
-    console.log(`Transcription successful: ${transcript.length} characters`);
-    return transcript.trim();
+    console.log(`Transcription successful: ${whisperResponse.text.length} characters with ${whisperResponse.segments?.length || 0} segments`);
+    return {
+      transcript: whisperResponse.text.trim(),
+      timestampedTranscript: whisperResponse
+    };
     
   } catch (error) {
     console.error('Error in video transcription:', error);
@@ -430,6 +461,86 @@ async function getVideoTranscriptWithProgress(
 
 function getMockData(): InstagramPostData {
   // Fallback mock data for development/testing
+  const mockTimestampedTranscript: WhisperTranscription = {
+    text: "Hey everyone! This video is sponsored by Sneak Eats. I've been using their protein bars for months now, and they're incredible. The chocolate chip flavor is my absolute favorite. Perfect for post-workout fuel. Don't forget to use my code SAVE20 for 20% off your first order.",
+    segments: [
+      {
+        text: "Hey everyone! This video is sponsored by Sneak Eats.",
+        start: 0.5,
+        end: 4.2,
+        words: [
+          { word: "Hey", start: 0.5, end: 0.8 },
+          { word: "everyone!", start: 0.9, end: 1.4 },
+          { word: "This", start: 1.8, end: 2.1 },
+          { word: "video", start: 2.1, end: 2.4 },
+          { word: "is", start: 2.4, end: 2.6 },
+          { word: "sponsored", start: 2.6, end: 3.2 },
+          { word: "by", start: 3.2, end: 3.4 },
+          { word: "Sneak", start: 3.4, end: 3.8 },
+          { word: "Eats.", start: 3.8, end: 4.2 }
+        ]
+      },
+      {
+        text: "I've been using their protein bars for months now, and they're incredible.",
+        start: 4.8,
+        end: 9.6,
+        words: [
+          { word: "I've", start: 4.8, end: 5.1 },
+          { word: "been", start: 5.1, end: 5.3 },
+          { word: "using", start: 5.3, end: 5.6 },
+          { word: "their", start: 5.6, end: 5.9 },
+          { word: "protein", start: 5.9, end: 6.4 },
+          { word: "bars", start: 6.4, end: 6.8 },
+          { word: "for", start: 6.8, end: 7.0 },
+          { word: "months", start: 7.0, end: 7.4 },
+          { word: "now,", start: 7.4, end: 7.8 },
+          { word: "and", start: 8.0, end: 8.2 },
+          { word: "they're", start: 8.2, end: 8.6 },
+          { word: "incredible.", start: 8.6, end: 9.6 }
+        ]
+      },
+      {
+        text: "The chocolate chip flavor is my absolute favorite. Perfect for post-workout fuel.",
+        start: 10.2,
+        end: 15.8,
+        words: [
+          { word: "The", start: 10.2, end: 10.4 },
+          { word: "chocolate", start: 10.4, end: 10.9 },
+          { word: "chip", start: 10.9, end: 11.2 },
+          { word: "flavor", start: 11.2, end: 11.6 },
+          { word: "is", start: 11.6, end: 11.8 },
+          { word: "my", start: 11.8, end: 12.0 },
+          { word: "absolute", start: 12.0, end: 12.5 },
+          { word: "favorite.", start: 12.5, end: 13.2 },
+          { word: "Perfect", start: 13.6, end: 14.0 },
+          { word: "for", start: 14.0, end: 14.2 },
+          { word: "post-workout", start: 14.2, end: 14.9 },
+          { word: "fuel.", start: 14.9, end: 15.8 }
+        ]
+      },
+      {
+        text: "Don't forget to use my code SAVE20 for 20% off your first order.",
+        start: 16.4,
+        end: 21.2,
+        words: [
+          { word: "Don't", start: 16.4, end: 16.7 },
+          { word: "forget", start: 16.7, end: 17.1 },
+          { word: "to", start: 17.1, end: 17.3 },
+          { word: "use", start: 17.3, end: 17.5 },
+          { word: "my", start: 17.5, end: 17.7 },
+          { word: "code", start: 17.7, end: 18.0 },
+          { word: "SAVE20", start: 18.0, end: 18.6 },
+          { word: "for", start: 18.6, end: 18.8 },
+          { word: "20%", start: 18.8, end: 19.2 },
+          { word: "off", start: 19.2, end: 19.4 },
+          { word: "your", start: 19.4, end: 19.6 },
+          { word: "first", start: 19.6, end: 19.9 },
+          { word: "order.", start: 19.9, end: 21.2 }
+        ]
+      }
+    ]
+  };
+
   return {
     caption: `🔥 Just tried the new Sneak Eats protein bars and they're incredible! The chocolate chip flavor is my absolute favorite. Perfect for post-workout fuel! 💪 
 
@@ -442,7 +553,8 @@ What's your go-to post-workout snack? Let me know in the comments! 👇
     mediaType: 'video',
     mediaUrl: 'https://example.com/sample-video.mp4',
     
-    transcript: 'This is a mock transcript. To get real transcriptions, please set up APIFY_API_KEY and OPENAI_API_KEY environment variables.',
+    transcript: mockTimestampedTranscript.text,
+    timestampedTranscript: mockTimestampedTranscript,
     
     hashtags: ['ad', 'sneakeats', 'proteinbar', 'fitness', 'postworkout', 'healthyeating', 'sponsored', 'fitnessmotivation', 'nutrition', 'gains'],
     
@@ -562,9 +674,13 @@ async function transformApifyData(data: ApifyInstagramResult): Promise<Instagram
 
   // Get transcript for videos using Whisper API
   let transcript = '';
+  let timestampedTranscript: WhisperTranscription | undefined;
   if (mediaType === 'video' && mediaUrl) {
     try {
-      transcript = await getVideoTranscript(mediaUrl);
+      const transcriptionResult = await getVideoTranscript(mediaUrl);
+      transcript = transcriptionResult.transcript;
+      timestampedTranscript = transcriptionResult.timestampedTranscript;
+      console.log('Transcription successful:', timestampedTranscript);
     } catch (error) {
       console.error('Error transcribing video:', error);
       
@@ -585,6 +701,7 @@ async function transformApifyData(data: ApifyInstagramResult): Promise<Instagram
     mediaType,
     mediaUrl,
     transcript,
+    timestampedTranscript,
     hashtags,
     altText,
   };
@@ -799,9 +916,9 @@ async function downloadVideoWithProxy(url: string, tempFilePath: string): Promis
 }
 
 /**
- * Transcribes a video using OpenAI's Whisper API
+ * Transcribes a video using OpenAI's Whisper API with timestamps
  */
-async function getVideoTranscript(videoUrl: string): Promise<string> {
+async function getVideoTranscript(videoUrl: string): Promise<{ transcript: string; timestampedTranscript: WhisperTranscription }> {
   // Check for OpenAI API key
   const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!openaiApiKey) {
@@ -824,13 +941,15 @@ async function getVideoTranscript(videoUrl: string): Promise<string> {
     
     console.log(`Transcribing video file: ${tempFilePath} (${fileSizeInMB.toFixed(1)}MB)`);
     
-    // Create form data for the API request
+    // Create form data for the API request with verbose_json format to get timestamps
     const formData = new FormData();
     const fileBuffer = await fs.readFile(tempFilePath);
     const blob = new Blob([fileBuffer], { type: 'video/mp4' });
     formData.append('file', blob, 'video.mp4');
     formData.append('model', 'whisper-1');
-    formData.append('response_format', 'text');
+    formData.append('response_format', 'verbose_json');
+    formData.append('timestamp_granularities[]', 'word');
+    formData.append('timestamp_granularities[]', 'segment');
     
     // Make the API request
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -846,14 +965,17 @@ async function getVideoTranscript(videoUrl: string): Promise<string> {
       throw new Error(`OpenAI API error: ${response.status} ${response.statusText} - ${errorText}`);
     }
     
-    const transcript = await response.text();
+    const whisperResponse = await response.json() as WhisperTranscription;
     
-    if (!transcript || transcript.trim().length === 0) {
+    if (!whisperResponse.text || whisperResponse.text.trim().length === 0) {
       throw new Error('Transcription returned empty result');
     }
     
-    console.log(`Transcription successful: ${transcript.length} characters`);
-    return transcript.trim();
+    console.log(`Transcription successful: ${whisperResponse.text.length} characters with ${whisperResponse.segments?.length || 0} segments`);
+    return {
+      transcript: whisperResponse.text.trim(),
+      timestampedTranscript: whisperResponse
+    };
     
   } catch (error) {
     console.error('Error in video transcription:', error);
