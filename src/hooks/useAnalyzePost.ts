@@ -20,6 +20,9 @@ interface ApiResponse {
     caption: string;
     mediaType: string;
     mediaUrl: string;
+    transcript: string;
+    hashtags: string[];
+    altText: string;
   };
   analysis?: AnalysisReport;
   error?: string;

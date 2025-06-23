@@ -6,8 +6,27 @@ const nextConfig: NextConfig = {
   
   // Optimize images (Instagram content)
   images: {
-    domains: ['instagram.com', 'cdninstagram.com', 'scontent.cdninstagram.com'],
+    domains: [
+      'instagram.com', 
+      'cdninstagram.com', 
+      'scontent.cdninstagram.com',
+      'scontent-lga3-1.cdninstagram.com',
+      'scontent-lga3-2.cdninstagram.com',
+      'scontent-lhr8-1.cdninstagram.com',
+      'scontent-lhr8-2.cdninstagram.com'
+    ],
     formats: ['image/webp', 'image/avif'],
+    // Allow any subdomain of cdninstagram.com
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '*.cdninstagram.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'scontent*.cdninstagram.com',
+      },
+    ],
   },
   
   // Headers for security and performance
