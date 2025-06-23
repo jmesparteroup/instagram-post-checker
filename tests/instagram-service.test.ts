@@ -1,4 +1,4 @@
-import { getInstagramPostData } from '../src/lib/instagram-service';
+import { getInstagramPostData, isValidInstagramUrl } from '../src/lib/instagram-service';
 
 // Mock fetch to simulate network failures and retries
 global.fetch = jest.fn();
@@ -9,6 +9,65 @@ describe('Instagram Service', () => {
     // Set up required environment variables
     process.env.APIFY_API_TOKEN = 'test-token';
     process.env.OPENAI_API_KEY = 'test-openai-key';
+  });
+
+  describe('URL Validation', () => {
+    it('should accept valid Instagram post URLs', () => {
+      const validPostUrls = [
+        'https://www.instagram.com/p/ABC123/',
+        'https://instagram.com/p/XYZ789',
+        'http://www.instagram.com/p/DEF456/',
+        'https://www.instagram.com/p/GHI012',
+      ];
+
+      validPostUrls.forEach(url => {
+        expect(isValidInstagramUrl(url)).toBe(true);
+      });
+    });
+
+    it('should accept valid Instagram reel URLs', () => {
+      const validReelUrls = [
+        'https://www.instagram.com/reel/ABC123/',
+        'https://instagram.com/reel/XYZ789',
+        'http://www.instagram.com/reel/DEF456/',
+        'https://www.instagram.com/reel/GHI012',
+      ];
+
+      validReelUrls.forEach(url => {
+        expect(isValidInstagramUrl(url)).toBe(true);
+      });
+    });
+
+    it('should accept valid Instagram user reel URLs', () => {
+      const validUserReelUrls = [
+        'https://www.instagram.com/username/reel/ABC123/',
+        'https://instagram.com/user.name/reel/XYZ789',
+        'http://www.instagram.com/user_name/reel/DEF456/',
+        'https://www.instagram.com/user123/reel/GHI012',
+        'https://www.instagram.com/test.user_123/reel/JKL456',
+      ];
+
+      validUserReelUrls.forEach(url => {
+        expect(isValidInstagramUrl(url)).toBe(true);
+      });
+    });
+
+    it('should reject invalid Instagram URLs', () => {
+      const invalidUrls = [
+        'https://www.instagram.com/user/profile/',
+        'https://www.instagram.com/stories/user/123/',
+        'https://www.facebook.com/p/ABC123/',
+        'https://www.instagram.com/p/',
+        'https://www.instagram.com/reel/',
+        'https://www.instagram.com/user/reel/',
+        'not-a-url',
+        '',
+      ];
+
+      invalidUrls.forEach(url => {
+        expect(isValidInstagramUrl(url)).toBe(false);
+      });
+    });
   });
 
   describe('Video Download Retry Logic', () => {

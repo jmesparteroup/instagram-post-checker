@@ -175,7 +175,7 @@ export default function Home() {
             Instagram Content Checker
           </CardTitle>
           <CardDescription>
-            Analyze Instagram posts for compliance with your requirements
+            Analyze Instagram posts and reels for compliance with your requirements
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -188,7 +188,7 @@ export default function Home() {
                 id="postUrl"
                 value={postUrl}
                 onChange={(e) => setPostUrl(e.target.value)}
-                placeholder="https://www.instagram.com/p/..."
+                placeholder="https://www.instagram.com/p/... or /reel/... or /username/reel/..."
                 disabled={isLoading}
               />
             </div>

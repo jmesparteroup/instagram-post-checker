@@ -63,7 +63,7 @@ export async function getInstagramPostDataWithProgress(
   // Validate Instagram URL
   onProgress('Validating Instagram URL...', 0);
   if (!isValidInstagramUrl(url)) {
-    throw new Error('Invalid Instagram URL provided. Please provide a valid Instagram post or reel URL.');
+    throw new Error('Invalid Instagram URL provided. Please provide a valid Instagram URL (post: /p/id, reel: /reel/id, or user reel: /username/reel/id).');
   }
 
   // Check for API key
@@ -138,8 +138,12 @@ export async function getInstagramPostDataWithProgress(
   }
 }
 
-function isValidInstagramUrl(url: string): boolean {
-  const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel)\/[A-Za-z0-9_-]+\/?/;
+export function isValidInstagramUrl(url: string): boolean {
+  // Support three formats:
+  // 1. instagram.com/p/id
+  // 2. instagram.com/reel/id  
+  // 3. instagram.com/user_id/reel/id
+  const instagramUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/((p|reel)\/[A-Za-z0-9_-]+|[A-Za-z0-9_.]+\/reel\/[A-Za-z0-9_-]+)\/?$/;
   return instagramUrlPattern.test(url);
 }
 
@@ -570,10 +574,15 @@ What's your go-to post-workout snack? Let me know in the comments! 👇
  * 
  * Features:
  * - Real Instagram post scraping
- * - Handles both posts and reels
+ * - Handles posts and reels (supports 3 URL formats)
  * - Extracts captions, media URLs, and metadata
  * - Uses OpenAI Whisper API for video transcription
  * - Fallback proxy service for video downloads when direct access is blocked
+ * 
+ * Supported URL formats:
+ * - Posts: instagram.com/p/[id]
+ * - Reels: instagram.com/reel/[id]
+ * - User reels: instagram.com/[username]/reel/[id]
  * 
  * Environment Variables:
  * - APIFY_API_KEY: Required for Instagram scraping
@@ -590,7 +599,7 @@ What's your go-to post-workout snack? Let me know in the comments! 👇
 export async function getInstagramPostData(url: string): Promise<InstagramPostData> {
   // Validate Instagram URL
   if (!isValidInstagramUrl(url)) {
-    throw new Error('Invalid Instagram URL provided. Please provide a valid Instagram post or reel URL.');
+    throw new Error('Invalid Instagram URL provided. Please provide a valid Instagram URL (post: /p/id, reel: /reel/id, or user reel: /username/reel/id).');
   }
 
   // Check for API key
